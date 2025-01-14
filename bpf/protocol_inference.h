@@ -204,10 +204,10 @@ static __always_inline enum message_type_t is_nats_protocol(const char *old_buf,
   }
 
   if (is_nats_info(old_buf, count))
-    return kRequest;
+    return kResponse;
 
   if (is_nats_connect(old_buf, count))
-    return kResponse;
+    return kRequest;
 
   char buf[6] = {};
   bpf_probe_read_user(buf, 5, old_buf);
@@ -230,13 +230,13 @@ static __always_inline enum message_type_t is_nats_protocol(const char *old_buf,
   // msg
   if ((buf[0] == 'M' || buf[0] == 'm') && (buf[1] == 'S' || buf[1] == 's') &&
       (buf[2] == 'G' || buf[2] == 'g') && (buf[3] == ' ' || buf[3] == '\t')) {
-    return kRequest;
+    return kResponse;
   }
   // hmsg
   if ((buf[0] == 'H' || buf[0] == 'h') && (buf[1] == 'M' || buf[1] == 'm') &&
       (buf[2] == 'S' || buf[2] == 's') && (buf[3] == 'G' || buf[3] == 'g') &&
       (buf[4] == ' ' || buf[4] == '\t')) {
-    return kRequest;
+    return kResponse;
   }
   // ping
   if ((buf[0] == 'P' || buf[0] == 'p') && (buf[1] == 'I' || buf[1] == 'i') &&
@@ -251,13 +251,13 @@ static __always_inline enum message_type_t is_nats_protocol(const char *old_buf,
   // +ok
   if ((buf[0] == '+') && (buf[1] == 'O' || buf[1] == 'o') &&
       (buf[2] == 'K' || buf[2] == 'k')) {
-    return kRequest;
+    return kResponse;
   }
   // -err
   if ((buf[0] == '-') && (buf[1] == 'E' || buf[1] == 'e') &&
       (buf[2] == 'R' || buf[2] == 'r') && (buf[3] == 'R' || buf[3] == 'r') &&
       (buf[4] == ' ' || buf[4] == '\t')) {
-    return kRequest;
+    return kResponse;
   }
   if (count < 6)
     return kUnknown;

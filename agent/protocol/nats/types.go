@@ -19,7 +19,7 @@ type NatsMessage struct {
 }
 
 type NatsProtocolParser interface {
-	Parse(payload []byte, req bool) protocol.ParseResult
+	Parse(payload []byte, messageType protocol.MessageType) protocol.ParseResult
 }
 
 type Info struct {

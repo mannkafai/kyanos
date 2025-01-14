@@ -53,7 +53,7 @@ func (parser *NatsStreamParser) Match(reqStreams map[protocol.StreamId]*protocol
 		return []protocol.Record{}
 	}
 	common.ProtocolParserLog.Debugf("NatsStreamParser Matching %d requests with %d responses.", len(*reqStream), len(*respStream))
-	return []protocol.Record{}
+	return protocol.MatchByTimestamp(reqStream, respStream)
 }
 
 func (parser *NatsStreamParser) FindBoundary(streamBuffer *buffer.StreamBuffer, messageType protocol.MessageType, startPos int) int {
@@ -63,7 +63,7 @@ func (parser *NatsStreamParser) FindBoundary(streamBuffer *buffer.StreamBuffer, 
 
 func (parser *NatsStreamParser) ParseStream(streamBuffer *buffer.StreamBuffer, messageType protocol.MessageType) protocol.ParseResult {
 	buffer := streamBuffer.Head().Buffer()
-	common.ProtocolParserLog.Debugf("NATSStreamParser received buffer length: %d, %x", len(buffer), string(buffer))
+	common.ProtocolParserLog.Debugf("NATSStreamParser received buffer length: %d, %x %v", len(buffer), string(buffer), messageType)
 
 	index := readField(buffer)
 	if index < 0 {
@@ -83,7 +83,7 @@ func (parser *NatsStreamParser) ParseStream(streamBuffer *buffer.StreamBuffer, m
 			return protocol.ParseResult{ParseState: protocol.Ignore, ReadBytes: index_}
 		}
 	}
-	return natsParser.Parse(buffer[index-len(method):], messageType == protocol.Request)
+	return natsParser.Parse(buffer[index-len(method):], messageType)
 }
 
 func readField(buffer []byte) int {
@@ -128,7 +128,7 @@ func (m *Info) String() string {
 	return fmt.Sprintf("Protocol:INFO,ServerID:%v,ServerName:%v,Version:%v,GoVersion:%v,Host:%v,Port:%v,MaxPayload:%v,TLSRequired:%v",
 		m.ServerID, m.ServerName, m.Version, m.GoVersion, m.Host, m.Port, m.MaxPayload, m.TLSRequired)
 }
-func (m *Info) Parse(payload []byte, req bool) protocol.ParseResult {
+func (m *Info) Parse(payload []byte, messageType protocol.MessageType) protocol.ParseResult {
 	// INFO {"option_name":option_value,...}␍␊
 	common.ProtocolParserLog.Debugf("NATS Parse Info:%d, %x", len(payload), string(payload))
 
@@ -151,8 +151,8 @@ func (m *Info) Parse(payload []byte, req bool) protocol.ParseResult {
 	}
 
 	msg.ProtocolCode = INFO
-	msg.isReq = req
-	common.ProtocolParserLog.Debugf("NATS Parsed Info:[%v], ReadBytes:%d", msg.String(), packetLen)
+	msg.isReq = messageType == protocol.Request
+	common.ProtocolParserLog.Debugf("NATS Parsed Info:[%v], ReadBytes:%d, %v, %v", msg.String(), packetLen, messageType, msg.isReq)
 	return protocol.ParseResult{
 		ParseState:     protocol.Success,
 		ParsedMessages: []protocol.ParsedMessage{&msg},
@@ -165,7 +165,7 @@ func (m *Connect) String() string {
 	return fmt.Sprintf("Protocol:CONNECT,Verbose:%v,Pedantic:%v,TLSRequired:%v,Name:%v,Version:%v",
 		m.Verbose, m.Pedantic, m.TLSRequired, m.Name, m.Version)
 }
-func (m *Connect) Parse(payload []byte, req bool) protocol.ParseResult {
+func (m *Connect) Parse(payload []byte, messageType protocol.MessageType) protocol.ParseResult {
 	// CONNECT {"option_name":option_value,...}␍␊
 	common.ProtocolParserLog.Debugf("NATS Parse Connect:%d, %x", len(payload), string(payload))
 
@@ -188,8 +188,8 @@ func (m *Connect) Parse(payload []byte, req bool) protocol.ParseResult {
 	}
 
 	msg.ProtocolCode = CONNECT
-	msg.isReq = req
-	common.ProtocolParserLog.Debugf("NATS Parsed Connect:[%v], ReadBytes:%d", msg.String(), packetLen)
+	msg.isReq = messageType == protocol.Request
+	common.ProtocolParserLog.Debugf("NATS Parsed Connect:[%v], ReadBytes:%d, %v, %v", msg.String(), packetLen, messageType, msg.isReq)
 	return protocol.ParseResult{
 		ParseState:     protocol.Success,
 		ParsedMessages: []protocol.ParsedMessage{&msg},
@@ -201,7 +201,7 @@ func (m *Connect) Parse(payload []byte, req bool) protocol.ParseResult {
 func (m *Pub) String() string {
 	return fmt.Sprintf("Protocol:PUB,Subject:%v,ReplyTo:%v,PayloadSize:%d,Payload:%x", m.Subject, m.ReplyTo, m.PayloadSize, m.Payload)
 }
-func (m *Pub) Parse(payload []byte, req bool) protocol.ParseResult {
+func (m *Pub) Parse(payload []byte, messageType protocol.MessageType) protocol.ParseResult {
 	// PUB <subject> [reply-to] <#bytes>␍␊[payload]␍␊
 	common.ProtocolParserLog.Debugf("NATS Parse Pub:%d, %x", len(payload), string(payload))
 
@@ -240,9 +240,9 @@ func (m *Pub) Parse(payload []byte, req bool) protocol.ParseResult {
 	msg.Payload = payload[packetLen : packetLen+payloadSize]
 
 	msg.ProtocolCode = PUB
-	msg.isReq = req
+	msg.isReq = messageType != protocol.Response
 	msg.NatsMessage.Subject = msg.Subject
-	common.ProtocolParserLog.Debugf("NATS Parsed Pub:[%v], ReadBytes:%d", msg.String(), payloadEnd)
+	common.ProtocolParserLog.Debugf("NATS Parsed Pub:[%v], ReadBytes:%d, %v, %v", msg.String(), payloadEnd, messageType, msg.isReq)
 	return protocol.ParseResult{
 		ParseState:     protocol.Success,
 		ParsedMessages: []protocol.ParsedMessage{&msg},
@@ -255,7 +255,7 @@ func (m *Hpub) String() string {
 	return fmt.Sprintf("Protocol:HPUB,Subject:%v,ReplyTo:%v,HeaderSize:%d,PayloadSize:%d,HeaderVersion:%v,Headers:%v,Payload:%x",
 		m.Subject, m.ReplyTo, m.HeaderSize, m.PayloadSize, m.HeaderVersion, m.Headers, m.Payload)
 }
-func (m *Hpub) Parse(payload []byte, req bool) protocol.ParseResult {
+func (m *Hpub) Parse(payload []byte, messageType protocol.MessageType) protocol.ParseResult {
 	// HPUB <subject> [reply-to] <#header bytes> <#total bytes>␍␊[headers]␍␊␍␊[payload]␍␊
 	common.ProtocolParserLog.Debugf("NATS Parse Hpub:%d, %x", len(payload), string(payload))
 
@@ -331,9 +331,9 @@ func (m *Hpub) Parse(payload []byte, req bool) protocol.ParseResult {
 	msg.Payload = payload[packetLen+headerSize : packetLen+totalSize]
 
 	msg.ProtocolCode = HPUB
-	msg.isReq = req
+	msg.isReq = messageType != protocol.Response
 	msg.NatsMessage.Subject = msg.Subject
-	common.ProtocolParserLog.Debugf("NATS Parsed Hpub:[%v], ReadBytes:%d", msg.String(), packetEnd)
+	common.ProtocolParserLog.Debugf("NATS Parsed Hpub:[%v], ReadBytes:%d, %v, %v", msg.String(), packetEnd, messageType, msg.isReq)
 	return protocol.ParseResult{
 		ParseState:     protocol.Success,
 		ParsedMessages: []protocol.ParsedMessage{&msg},
@@ -346,7 +346,7 @@ func (m *Sub) String() string {
 	return fmt.Sprintf("Protocol:SUB,Subject:%v,QueueGroup:%v,Sid:%v",
 		m.Subject, m.QueueGroup, m.Sid)
 }
-func (m *Sub) Parse(payload []byte, req bool) protocol.ParseResult {
+func (m *Sub) Parse(payload []byte, messageType protocol.MessageType) protocol.ParseResult {
 	// SUB <subject> [queue group] <sid>␍␊
 	common.ProtocolParserLog.Debugf("NATS Parse Sub:%d, %x", len(payload), string(payload))
 
@@ -374,9 +374,9 @@ func (m *Sub) Parse(payload []byte, req bool) protocol.ParseResult {
 	msg.Sid = string(parts[index])
 
 	msg.ProtocolCode = SUB
-	msg.isReq = req
+	msg.isReq = messageType == protocol.Request
 	msg.NatsMessage.Subject = msg.Subject
-	common.ProtocolParserLog.Debugf("NATS Parsed Sub:[%v], ReadBytes:%d", msg.String(), packetLen)
+	common.ProtocolParserLog.Debugf("NATS Parsed Sub:[%v], ReadBytes:%d, %v, %v", msg.String(), packetLen, messageType, msg.isReq)
 	return protocol.ParseResult{
 		ParseState:     protocol.Success,
 		ParsedMessages: []protocol.ParsedMessage{&msg},
@@ -389,7 +389,7 @@ func (m *Unsub) String() string {
 	return fmt.Sprintf("Protocol:UNSUB,Sid:%v,MaxMsgs:%v",
 		m.Sid, m.MaxMsgs)
 }
-func (m *Unsub) Parse(payload []byte, req bool) protocol.ParseResult {
+func (m *Unsub) Parse(payload []byte, messageType protocol.MessageType) protocol.ParseResult {
 	// UNSUB <sid> [max_msgs]␍␊
 	common.ProtocolParserLog.Debugf("NATS Parse Unsub:%d, %x", len(payload), string(payload))
 
@@ -417,8 +417,8 @@ func (m *Unsub) Parse(payload []byte, req bool) protocol.ParseResult {
 	}
 
 	msg.ProtocolCode = UNSUB
-	msg.isReq = req
-	common.ProtocolParserLog.Debugf("NATS Parsed Unsub:[%v], ReadBytes:%d", msg.String(), packetLen)
+	msg.isReq = messageType == protocol.Request
+	common.ProtocolParserLog.Debugf("NATS Parsed Unsub:[%v], ReadBytes:%d, %v, %v", msg.String(), packetLen, messageType, msg.isReq)
 	return protocol.ParseResult{
 		ParseState:     protocol.Success,
 		ParsedMessages: []protocol.ParsedMessage{&msg},
@@ -431,7 +431,7 @@ func (m *Msg) String() string {
 	return fmt.Sprintf("Protocol:MSG,Subject:%v,Sid:%v,ReplyTo:%v,PayloadSize:%d,Payload:%x",
 		m.Subject, m.Sid, m.ReplyTo, m.PayloadSize, m.Payload)
 }
-func (m *Msg) Parse(payload []byte, req bool) protocol.ParseResult {
+func (m *Msg) Parse(payload []byte, messageType protocol.MessageType) protocol.ParseResult {
 	// MSG <subject> <sid> [reply-to] <#bytes>␍␊[payload]␍␊
 	common.ProtocolParserLog.Debugf("NATS Parse Msg:%d, %x", len(payload), string(payload))
 
@@ -472,9 +472,9 @@ func (m *Msg) Parse(payload []byte, req bool) protocol.ParseResult {
 	msg.Payload = payload[packetLen : packetLen+payloadSize]
 
 	msg.ProtocolCode = MSG
-	msg.isReq = req
+	msg.isReq = messageType != protocol.Request
 	msg.NatsMessage.Subject = msg.Subject
-	common.ProtocolParserLog.Debugf("NATS Parsed Msg:[%v], ReadBytes:%d", msg.String(), payloadEnd)
+	common.ProtocolParserLog.Debugf("NATS Parsed Msg:[%v], ReadBytes:%d, %v, %v", msg.String(), payloadEnd, messageType, msg.isReq)
 	return protocol.ParseResult{
 		ParseState:     protocol.Success,
 		ParsedMessages: []protocol.ParsedMessage{&msg},
@@ -487,7 +487,7 @@ func (m *Hmsg) String() string {
 	return fmt.Sprintf("Protocol:HMSG,Subject:%v,Sid:%v,ReplyTo:%v,HeaderSize:%d,PayloadSize:%d,HeaderVersion:%v,Headers:%v,Payload:%x",
 		m.Subject, m.Sid, m.ReplyTo, m.HeaderSize, m.PayloadSize, m.HeaderVersion, m.Headers, m.Payload)
 }
-func (m *Hmsg) Parse(payload []byte, req bool) protocol.ParseResult {
+func (m *Hmsg) Parse(payload []byte, messageType protocol.MessageType) protocol.ParseResult {
 	// HMSG <subject> <sid> [reply-to] <#header bytes> <#total bytes>␍␊[headers]␍␊␍␊[payload]␍␊
 	common.ProtocolParserLog.Debugf("NATS Parse Hmsg:%d, %x", len(payload), string(payload))
 
@@ -564,9 +564,9 @@ func (m *Hmsg) Parse(payload []byte, req bool) protocol.ParseResult {
 	msg.Payload = payload[packetLen+headerSize : packetLen+totalSize]
 
 	msg.ProtocolCode = HMSG
-	msg.isReq = req
+	msg.isReq = messageType != protocol.Request
 	msg.NatsMessage.Subject = msg.Subject
-	common.ProtocolParserLog.Debugf("NATS Parsed Hmsg:[%v], ReadBytes:%d", msg.String(), packetEnd)
+	common.ProtocolParserLog.Debugf("NATS Parsed Hmsg:[%v], ReadBytes:%d, %v, %v", msg.String(), packetEnd, messageType, msg.isReq)
 	return protocol.ParseResult{
 		ParseState:     protocol.Success,
 		ParsedMessages: []protocol.ParsedMessage{&msg},
@@ -578,7 +578,7 @@ func (m *Hmsg) Parse(payload []byte, req bool) protocol.ParseResult {
 func (m *Ping) String() string {
 	return "Protocol:PING"
 }
-func (m *Ping) Parse(payload []byte, req bool) protocol.ParseResult {
+func (m *Ping) Parse(payload []byte, messageType protocol.MessageType) protocol.ParseResult {
 	// PING␍␊
 	common.ProtocolParserLog.Debugf("NATS Parse Ping:%d, %x", len(payload), string(payload))
 
@@ -596,8 +596,8 @@ func (m *Ping) Parse(payload []byte, req bool) protocol.ParseResult {
 	msg := Ping{}
 
 	msg.ProtocolCode = PING
-	msg.isReq = req
-	common.ProtocolParserLog.Debugf("NATS Parsed Ping:[%v], ReadBytes:%d", msg.String(), packetLen)
+	msg.isReq = messageType == protocol.Request
+	common.ProtocolParserLog.Debugf("NATS Parsed Ping:[%v], ReadBytes:%d, %v, %v", msg.String(), packetLen, messageType, msg.isReq)
 	return protocol.ParseResult{
 		ParseState:     protocol.Success,
 		ParsedMessages: []protocol.ParsedMessage{&msg},
@@ -610,7 +610,7 @@ func (m *Pong) String() string {
 	return "Protocol:PONG"
 }
 
-func (m *Pong) Parse(payload []byte, req bool) protocol.ParseResult {
+func (m *Pong) Parse(payload []byte, messageType protocol.MessageType) protocol.ParseResult {
 	// PONG␍␊
 	common.ProtocolParserLog.Debugf("NATS Parse Pong:%d, %x", len(payload), string(payload))
 
@@ -628,8 +628,8 @@ func (m *Pong) Parse(payload []byte, req bool) protocol.ParseResult {
 	msg := Pong{}
 
 	msg.ProtocolCode = PONG
-	msg.isReq = req
-	common.ProtocolParserLog.Debugf("NATS Parsed Pong:[%v], ReadBytes:%d", msg.String(), packetLen)
+	msg.isReq = messageType == protocol.Request
+	common.ProtocolParserLog.Debugf("NATS Parsed Pong:[%v], ReadBytes:%d, %v, %v", msg.String(), packetLen, messageType, msg.isReq)
 	return protocol.ParseResult{
 		ParseState:     protocol.Success,
 		ParsedMessages: []protocol.ParsedMessage{&msg},
@@ -642,7 +642,7 @@ func (m *Ok) String() string {
 	return "Protocol:+OK"
 }
 
-func (m *Ok) Parse(payload []byte, req bool) protocol.ParseResult {
+func (m *Ok) Parse(payload []byte, messageType protocol.MessageType) protocol.ParseResult {
 	// +OK␍␊
 	common.ProtocolParserLog.Debugf("NATS Parse Ok:%d, %x", len(payload), string(payload))
 
@@ -660,8 +660,8 @@ func (m *Ok) Parse(payload []byte, req bool) protocol.ParseResult {
 	msg := Ok{}
 
 	msg.ProtocolCode = OK
-	msg.isReq = req
-	common.ProtocolParserLog.Debugf("NATS Parsed Ok:[%v], ReadBytes:%d", msg.String(), packetLen)
+	msg.isReq = messageType == protocol.Request
+	common.ProtocolParserLog.Debugf("NATS Parsed Ok:[%v], ReadBytes:%d, %v, %v", msg.String(), packetLen, messageType, msg.isReq)
 	return protocol.ParseResult{
 		ParseState:     protocol.Success,
 		ParsedMessages: []protocol.ParsedMessage{&msg},
@@ -673,7 +673,7 @@ func (m *Ok) Parse(payload []byte, req bool) protocol.ParseResult {
 func (m *Err) String() string {
 	return fmt.Sprintf("Protocol:-ERR,ErrorMessage:%v", m.ErrorMessage)
 }
-func (m *Err) Parse(payload []byte, req bool) protocol.ParseResult {
+func (m *Err) Parse(payload []byte, messageType protocol.MessageType) protocol.ParseResult {
 	// -ERR <error message>␍␊
 	common.ProtocolParserLog.Debugf("NATS Parse Err:%d, %x", len(payload), string(payload))
 
@@ -692,8 +692,8 @@ func (m *Err) Parse(payload []byte, req bool) protocol.ParseResult {
 	msg.ErrorMessage = string(trimFiled(payload[5 : packetLen-len(_CRLF_)]))
 
 	msg.ProtocolCode = ERR
-	msg.isReq = req
-	common.ProtocolParserLog.Debugf("NATS Parsed Err:[%v], ReadBytes:%d", msg.String(), packetLen)
+	msg.isReq = messageType == protocol.Request
+	common.ProtocolParserLog.Debugf("NATS Parsed Err:[%v], ReadBytes:%d, %v, %v", msg.String(), packetLen, messageType, msg.isReq)
 	return protocol.ParseResult{
 		ParseState:     protocol.Success,
 		ParsedMessages: []protocol.ParsedMessage{&msg},
