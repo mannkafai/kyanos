@@ -1,6 +1,7 @@
 package nats
 
 import (
+	"kyanos/agent/buffer"
 	"kyanos/agent/protocol"
 )
 
@@ -19,7 +20,7 @@ type NatsMessage struct {
 }
 
 type NatsProtocolParser interface {
-	Parse(payload []byte, messageType protocol.MessageType) protocol.ParseResult
+	Parse(payload []byte, offset int, messageType protocol.MessageType, streamBuffer *buffer.StreamBuffer) protocol.ParseResult
 }
 
 type Info struct {
@@ -31,7 +32,7 @@ type Info struct {
 	Host        string `json:"host"`
 	Port        uint16 `json:"port"`
 	MaxPayload  int    `json:"max_payload"`
-	TLSRequired *bool  `json:"tls_required,omitempty"`
+	TLSRequired bool   `json:"tls_required,omitempty"`
 }
 
 type Connect struct {
