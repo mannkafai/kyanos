@@ -17,6 +17,7 @@ type NatsMessage struct {
 	ProtocolCode ProtocolCode
 	Subject      string
 	isReq        bool
+	Buf          []byte
 }
 
 type NatsProtocolParser interface {

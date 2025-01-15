@@ -21,9 +21,9 @@ function test_nats_echo() {
     export cid1
     echo $cid1
 
-    timeout 30 ${CMD} watch --debug-output nats 2>&1 | tee "${ECHO_LNAME}" &
-    sleep 10
-    ./testdata/nats_echo --echo demo.subject &>/dev/null || true
+    timeout 30 ${CMD} watch nats --debug-output 2>&1 | tee "${ECHO_LNAME}" &
+    sleep 2
+    ./testdata/nats/nats_echo --echo demo.subject --count 4 &>/dev/null || true
     wait
 
     cat "${ECHO_LNAME}"

@@ -9,7 +9,7 @@ import (
 func TestInfoParser(t *testing.T) {
 	payload := []byte("INFO {\"server_id\":\"test_id\",\"server_name\":\"test_name\",\"version\":\"1.0.0\",\"go_version\":\"1.15\",\"host\":\"localhost\",\"port\":4222,\"max_payload\":1048576,\"tls_required\":false}\r\n")
 	parser := &Info{}
-	result := parser.Parse(payload, true)
+	result := parser.Parse(payload, 0, protocol.Unknown, nil)
 
 	if result.ParseState != protocol.Success {
 		t.Errorf("Expected ParseState to be Success, got %v", result.ParseState)
@@ -28,7 +28,7 @@ func TestInfoParser(t *testing.T) {
 func TestConnectParser(t *testing.T) {
 	payload := []byte("CONNECT {\"verbose\":true,\"pedantic\":false,\"tls_required\":true,\"name\":\"test_client\",\"version\":\"1.0.0\"}\r\n")
 	parser := &Connect{}
-	result := parser.Parse(payload, true)
+	result := parser.Parse(payload, 0, protocol.Unknown, nil)
 
 	if result.ParseState != protocol.Success {
 		t.Errorf("Expected ParseState to be Success, got %v", result.ParseState)
@@ -99,7 +99,7 @@ func TestPubParser(t *testing.T) {
 
 	for _, tt := range pubTests {
 		t.Run(tt.Name, func(t *testing.T) {
-			result := parser.Parse(tt.Bytes, true)
+			result := parser.Parse(tt.Bytes, 0, protocol.Unknown, nil)
 
 			if tt.ExpectedError {
 				if result.ParseState == protocol.Success {
@@ -194,7 +194,7 @@ func TestHpubParser(t *testing.T) {
 
 	for _, tt := range hpubTests {
 		t.Run(tt.Name, func(t *testing.T) {
-			result := parser.Parse(tt.Bytes, true)
+			result := parser.Parse(tt.Bytes, 0, protocol.Unknown, nil)
 
 			if tt.ExpectedError {
 				if result.ParseState == protocol.Success {
@@ -269,7 +269,7 @@ func TestSubParser(t *testing.T) {
 
 	for _, tt := range subTests {
 		t.Run(tt.Name, func(t *testing.T) {
-			result := parser.Parse(tt.Bytes, true)
+			result := parser.Parse(tt.Bytes, 0, protocol.Unknown, nil)
 
 			if tt.ExpectedError {
 				if result.ParseState == protocol.Success {
@@ -335,7 +335,7 @@ func TestUnsubParser(t *testing.T) {
 
 	for _, tt := range unsubTests {
 		t.Run(tt.Name, func(t *testing.T) {
-			result := parser.Parse(tt.Bytes, true)
+			result := parser.Parse(tt.Bytes, 0, protocol.Unknown, nil)
 
 			if tt.ExpectedError {
 				if result.ParseState == protocol.Success {
@@ -404,7 +404,7 @@ func TestMsgParser(t *testing.T) {
 
 	for _, tt := range msgTests {
 		t.Run(tt.Name, func(t *testing.T) {
-			result := parser.Parse(tt.Bytes, true)
+			result := parser.Parse(tt.Bytes, 0, protocol.Unknown, nil)
 
 			if tt.ExpectedError {
 				if result.ParseState == protocol.Success {
@@ -505,7 +505,7 @@ func TestHmsgParser(t *testing.T) {
 
 	for _, tt := range hmsgTests {
 		t.Run(tt.Name, func(t *testing.T) {
-			result := parser.Parse(tt.Bytes, true)
+			result := parser.Parse(tt.Bytes, 0, protocol.Unknown, nil)
 
 			if tt.ExpectedError {
 				if result.ParseState == protocol.Success {
@@ -552,7 +552,7 @@ func TestHmsgParser(t *testing.T) {
 func TestPingParser(t *testing.T) {
 	payload := []byte("PING\r\n")
 	parser := &Ping{}
-	result := parser.Parse(payload, true)
+	result := parser.Parse(payload, 0, protocol.Unknown, nil)
 
 	if result.ParseState != protocol.Success {
 		t.Errorf("Expected ParseState to be Success, got %v", result.ParseState)
@@ -571,7 +571,7 @@ func TestPingParser(t *testing.T) {
 func TestPongParser(t *testing.T) {
 	payload := []byte("PONG\r\n")
 	parser := &Pong{}
-	result := parser.Parse(payload, true)
+	result := parser.Parse(payload, 0, protocol.Unknown, nil)
 
 	if result.ParseState != protocol.Success {
 		t.Errorf("Expected ParseState to be Success, got %v", result.ParseState)
@@ -590,7 +590,7 @@ func TestPongParser(t *testing.T) {
 func TestOkParser(t *testing.T) {
 	payload := []byte("+OK\r\n")
 	parser := &Ok{}
-	result := parser.Parse(payload, true)
+	result := parser.Parse(payload, 0, protocol.Unknown, nil)
 
 	if result.ParseState != protocol.Success {
 		t.Errorf("Expected ParseState to be Success, got %v", result.ParseState)
@@ -609,7 +609,7 @@ func TestOkParser(t *testing.T) {
 func TestErrParser(t *testing.T) {
 	payload := []byte("-ERR 'Unknown Protocol Operation'\r\n")
 	parser := &Err{}
-	result := parser.Parse(payload, true)
+	result := parser.Parse(payload, 0, protocol.Unknown, nil)
 
 	if result.ParseState != protocol.Success {
 		t.Errorf("Expected ParseState to be Success, got %v", result.ParseState)

@@ -14,6 +14,8 @@ func main() {
 	natsURL := flag.String("nats", nats.DefaultURL, "NATS server URL")
 	subject := flag.String("subject", "demo.subject", "Subject to publish messages to")
 	echoSubject := flag.String("echo", "echo.subject", "Subject to receive echo messages")
+	count := flag.Int("count", 0, "Number of messages to send (0 for infinite)")
+	interval := flag.Duration("interval", 5*time.Second, "Interval between messages")
 	flag.Parse()
 
 	// 连接到NATS服务器
@@ -30,7 +32,7 @@ func main() {
 	}
 
 	// 发送消息并接收回显
-	for i := 0; ; i++ {
+	for i := 0; *count == 0 || i < *count; i++ {
 		msg := fmt.Sprintf("Hello NATS! %d", i)
 		if err := nc.Publish(*subject, []byte(msg)); err != nil {
 			log.Fatal(err)
@@ -45,6 +47,6 @@ func main() {
 		}
 
 		log.Printf("Received echo: %s\n", string(echoMsg.Data))
-		time.Sleep(1 * time.Second)
+		time.Sleep(*interval)
 	}
 }

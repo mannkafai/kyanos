@@ -47,8 +47,18 @@ func init() {
 }
 
 func (parser *NatsStreamParser) Match(reqStreams map[protocol.StreamId]*protocol.ParsedMessageQueue, respStreams map[protocol.StreamId]*protocol.ParsedMessageQueue) []protocol.Record {
-	reqStream, ok1 := reqStreams[0]
-	respStream, ok2 := respStreams[0]
+	records := make([]protocol.Record, 0)
+
+	for _, id := range []protocol.StreamId{0, 1} {
+		if records_ := match(reqStreams, respStreams, id); len(records_) > 0 {
+			records = append(records, records_...)
+		}
+	}
+	return records
+}
+func match(reqStreams map[protocol.StreamId]*protocol.ParsedMessageQueue, respStreams map[protocol.StreamId]*protocol.ParsedMessageQueue, id protocol.StreamId) []protocol.Record {
+	reqStream, ok1 := reqStreams[id]
+	respStream, ok2 := respStreams[id]
 	if !ok1 || !ok2 {
 		return []protocol.Record{}
 	}
@@ -109,7 +119,7 @@ func (msg *NatsMessage) FormatToSummaryString() string {
 }
 
 func (msg *NatsMessage) FormatToString() string {
-	return fmt.Sprintf("protocol=[%v], subject=[%v], detail=[%v]", msg.ProtocolCode.String(), msg.Subject, msg.String())
+	return fmt.Sprintf("protocol=[%v], subject=[%v], detail=[%s]", msg.ProtocolCode.String(), msg.Subject, msg.Buf)
 }
 
 func (msg *NatsMessage) IsReq() bool {
@@ -117,24 +127,22 @@ func (msg *NatsMessage) IsReq() bool {
 }
 
 func (msg *NatsMessage) StreamId() protocol.StreamId {
+	if msg.ProtocolCode == PING || msg.ProtocolCode == PONG {
+		return 1
+	}
 	return 0
 }
 
-func packResult(streamBuffer *buffer.StreamBuffer, readBytes int, msg NatsMessage) protocol.ParseResult {
-	fb, ok := protocol.CreateFrameBase(streamBuffer, readBytes)
-	if !ok {
-		common.ProtocolParserLog.Debugf("NATS Failed to create FrameBase for frameSize=%d", readBytes)
-		return protocol.ParseResult{
-			ParseState: protocol.Ignore,
-			ReadBytes:  readBytes,
+func (msg *NatsMessage) packFrameBase(streamBuffer *buffer.StreamBuffer, readBytes int) bool {
+	if streamBuffer != nil {
+		fb, ok := protocol.CreateFrameBase(streamBuffer, readBytes)
+		if !ok {
+			common.ProtocolParserLog.Debugf("NATS Failed to create FrameBase for frameSize=%d", readBytes)
+			return false
 		}
+		msg.FrameBase = fb
 	}
-	msg.FrameBase = fb
-	return protocol.ParseResult{
-		ParseState:     protocol.Success,
-		ParsedMessages: []protocol.ParsedMessage{&msg},
-		ReadBytes:      readBytes,
-	}
+	return true
 }
 
 // Info
@@ -164,10 +172,19 @@ func (m *Info) Parse(payload []byte, offset int, messageType protocol.MessageTyp
 		return protocol.ParseResult{ParseState: protocol.Ignore, ReadBytes: packetLen + offset}
 	}
 
+	packetEnd := packetLen
 	msg.ProtocolCode = INFO
 	msg.isReq = false
-	common.ProtocolParserLog.Debugf("NATS Parsed Info:[%v], ReadBytes:%d, %v, %v", msg.String(), packetLen, messageType, msg.isReq)
-	return packResult(streamBuffer, packetLen+offset, msg.NatsMessage)
+	msg.Buf = payload[:packetEnd]
+	common.ProtocolParserLog.Debugf("NATS Parsed Info:[%v], ReadBytes:%d, %v, %v", msg.String(), packetEnd, messageType, msg.isReq)
+	if ok := msg.packFrameBase(streamBuffer, packetEnd+offset); !ok {
+		return protocol.ParseResult{ParseState: protocol.Ignore, ReadBytes: packetEnd + offset}
+	}
+	return protocol.ParseResult{
+		ParseState:     protocol.Success,
+		ParsedMessages: []protocol.ParsedMessage{&msg},
+		ReadBytes:      packetEnd + offset,
+	}
 }
 
 // Connect
@@ -197,10 +214,19 @@ func (m *Connect) Parse(payload []byte, offset int, messageType protocol.Message
 		return protocol.ParseResult{ParseState: protocol.Ignore, ReadBytes: packetLen + offset}
 	}
 
+	packetEnd := packetLen
 	msg.ProtocolCode = CONNECT
 	msg.isReq = true
-	common.ProtocolParserLog.Debugf("NATS Parsed Connect:[%v], ReadBytes:%d, %v, %v", msg.String(), packetLen, messageType, msg.isReq)
-	return packResult(streamBuffer, packetLen+offset, msg.NatsMessage)
+	msg.Buf = payload[:packetEnd]
+	common.ProtocolParserLog.Debugf("NATS Parsed Connect:[%v], ReadBytes:%d, %v, %v", msg.String(), packetEnd, messageType, msg.isReq)
+	if ok := msg.packFrameBase(streamBuffer, packetEnd+offset); !ok {
+		return protocol.ParseResult{ParseState: protocol.Ignore, ReadBytes: packetEnd + offset}
+	}
+	return protocol.ParseResult{
+		ParseState:     protocol.Success,
+		ParsedMessages: []protocol.ParsedMessage{&msg},
+		ReadBytes:      packetEnd + offset,
+	}
 }
 
 // Pub
@@ -235,8 +261,8 @@ func (m *Pub) Parse(payload []byte, offset int, messageType protocol.MessageType
 	if err != nil {
 		return protocol.ParseResult{ParseState: protocol.Ignore, ReadBytes: packetLen + offset}
 	}
-	payloadEnd := packetLen + payloadSize + len(_CRLF_)
-	if len(payload) < payloadEnd {
+	packetEnd := packetLen + payloadSize + len(_CRLF_)
+	if len(payload) < packetEnd {
 		return protocol.ParseResult{ParseState: protocol.NeedsMoreData}
 	}
 	if !bytes.HasPrefix(payload[packetLen+payloadSize:], []byte(_CRLF_)) {
@@ -248,8 +274,16 @@ func (m *Pub) Parse(payload []byte, offset int, messageType protocol.MessageType
 	msg.ProtocolCode = PUB
 	msg.isReq = true
 	msg.NatsMessage.Subject = msg.Subject
-	common.ProtocolParserLog.Debugf("NATS Parsed Pub:[%v], ReadBytes:%d, %v, %v", msg.String(), payloadEnd, messageType, msg.isReq)
-	return packResult(streamBuffer, payloadEnd+offset, msg.NatsMessage)
+	msg.Buf = payload[:packetEnd]
+	common.ProtocolParserLog.Debugf("NATS Parsed Pub:[%v], ReadBytes:%d, %v, %v", msg.String(), packetEnd, messageType, msg.isReq)
+	if ok := msg.packFrameBase(streamBuffer, packetEnd+offset); !ok {
+		return protocol.ParseResult{ParseState: protocol.Ignore, ReadBytes: packetEnd + offset}
+	}
+	return protocol.ParseResult{
+		ParseState:     protocol.Success,
+		ParsedMessages: []protocol.ParsedMessage{&msg},
+		ReadBytes:      packetEnd + offset,
+	}
 }
 
 // Hpub
@@ -326,8 +360,16 @@ func (m *Hpub) Parse(payload []byte, offset int, messageType protocol.MessageTyp
 	msg.ProtocolCode = HPUB
 	msg.isReq = true
 	msg.NatsMessage.Subject = msg.Subject
+	msg.Buf = payload[:packetEnd]
 	common.ProtocolParserLog.Debugf("NATS Parsed Hpub:[%v], ReadBytes:%d, %v, %v", msg.String(), packetEnd, messageType, msg.isReq)
-	return packResult(streamBuffer, packetEnd+offset, msg.NatsMessage)
+	if ok := msg.packFrameBase(streamBuffer, packetEnd+offset); !ok {
+		return protocol.ParseResult{ParseState: protocol.Ignore, ReadBytes: packetEnd + offset}
+	}
+	return protocol.ParseResult{
+		ParseState:     protocol.Success,
+		ParsedMessages: []protocol.ParsedMessage{&msg},
+		ReadBytes:      packetEnd + offset,
+	}
 }
 
 // Sub
@@ -362,11 +404,20 @@ func (m *Sub) Parse(payload []byte, offset int, messageType protocol.MessageType
 	}
 	msg.Sid = string(parts[index])
 
+	packetEnd := packetLen
 	msg.ProtocolCode = SUB
 	msg.isReq = true
 	msg.NatsMessage.Subject = msg.Subject
-	common.ProtocolParserLog.Debugf("NATS Parsed Sub:[%v], ReadBytes:%d, %v, %v", msg.String(), packetLen, messageType, msg.isReq)
-	return packResult(streamBuffer, packetLen+offset, msg.NatsMessage)
+	msg.Buf = payload[:packetEnd]
+	common.ProtocolParserLog.Debugf("NATS Parsed Sub:[%v], ReadBytes:%d, %v, %v", msg.String(), packetEnd, messageType, msg.isReq)
+	if ok := msg.packFrameBase(streamBuffer, packetEnd+offset); !ok {
+		return protocol.ParseResult{ParseState: protocol.Ignore, ReadBytes: packetEnd + offset}
+	}
+	return protocol.ParseResult{
+		ParseState:     protocol.Success,
+		ParsedMessages: []protocol.ParsedMessage{&msg},
+		ReadBytes:      packetEnd + offset,
+	}
 }
 
 // Unsub
@@ -401,10 +452,19 @@ func (m *Unsub) Parse(payload []byte, offset int, messageType protocol.MessageTy
 		msg.MaxMsgs = maxMsgs
 	}
 
+	packetEnd := packetLen
 	msg.ProtocolCode = UNSUB
 	msg.isReq = true
-	common.ProtocolParserLog.Debugf("NATS Parsed Unsub:[%v], ReadBytes:%d, %v, %v", msg.String(), packetLen, messageType, msg.isReq)
-	return packResult(streamBuffer, packetLen+offset, msg.NatsMessage)
+	msg.Buf = payload[:packetEnd]
+	common.ProtocolParserLog.Debugf("NATS Parsed Unsub:[%v], ReadBytes:%d, %v, %v", msg.String(), packetEnd, messageType, msg.isReq)
+	if ok := msg.packFrameBase(streamBuffer, packetEnd+offset); !ok {
+		return protocol.ParseResult{ParseState: protocol.Ignore, ReadBytes: packetEnd + offset}
+	}
+	return protocol.ParseResult{
+		ParseState:     protocol.Success,
+		ParsedMessages: []protocol.ParsedMessage{&msg},
+		ReadBytes:      packetEnd + offset,
+	}
 }
 
 // Msg
@@ -442,8 +502,8 @@ func (m *Msg) Parse(payload []byte, offset int, messageType protocol.MessageType
 	if err != nil {
 		return protocol.ParseResult{ParseState: protocol.Ignore, ReadBytes: packetLen + offset}
 	}
-	payloadEnd := packetLen + payloadSize + len(_CRLF_)
-	if len(payload) < payloadEnd {
+	packetEnd := packetLen + payloadSize + len(_CRLF_)
+	if len(payload) < packetEnd {
 		return protocol.ParseResult{ParseState: protocol.NeedsMoreData}
 	}
 	if !bytes.HasPrefix(payload[packetLen+payloadSize:], []byte(_CRLF_)) {
@@ -455,8 +515,16 @@ func (m *Msg) Parse(payload []byte, offset int, messageType protocol.MessageType
 	msg.ProtocolCode = MSG
 	msg.isReq = false
 	msg.NatsMessage.Subject = msg.Subject
-	common.ProtocolParserLog.Debugf("NATS Parsed Msg:[%v], ReadBytes:%d, %v, %v", msg.String(), payloadEnd, messageType, msg.isReq)
-	return packResult(streamBuffer, payloadEnd+offset, msg.NatsMessage)
+	msg.Buf = payload[:packetEnd]
+	common.ProtocolParserLog.Debugf("NATS Parsed Msg:[%v], ReadBytes:%d, %v, %v", msg.String(), packetEnd, messageType, msg.isReq)
+	if ok := msg.packFrameBase(streamBuffer, packetEnd+offset); !ok {
+		return protocol.ParseResult{ParseState: protocol.Ignore, ReadBytes: packetEnd + offset}
+	}
+	return protocol.ParseResult{
+		ParseState:     protocol.Success,
+		ParsedMessages: []protocol.ParsedMessage{&msg},
+		ReadBytes:      packetEnd + offset,
+	}
 }
 
 // Hmsg
@@ -534,8 +602,16 @@ func (m *Hmsg) Parse(payload []byte, offset int, messageType protocol.MessageTyp
 	msg.ProtocolCode = HMSG
 	msg.isReq = false
 	msg.NatsMessage.Subject = msg.Subject
+	msg.Buf = payload[:packetEnd]
 	common.ProtocolParserLog.Debugf("NATS Parsed Hmsg:[%v], ReadBytes:%d, %v, %v", msg.String(), packetEnd, messageType, msg.isReq)
-	return packResult(streamBuffer, packetEnd+offset, msg.NatsMessage)
+	if ok := msg.packFrameBase(streamBuffer, packetEnd+offset); !ok {
+		return protocol.ParseResult{ParseState: protocol.Ignore, ReadBytes: packetEnd + offset}
+	}
+	return protocol.ParseResult{
+		ParseState:     protocol.Success,
+		ParsedMessages: []protocol.ParsedMessage{&msg},
+		ReadBytes:      packetEnd + offset,
+	}
 }
 
 // Ping
@@ -559,17 +635,25 @@ func (m *Ping) Parse(payload []byte, offset int, messageType protocol.MessageTyp
 
 	msg := Ping{}
 
+	packetEnd := packetLen
 	msg.ProtocolCode = PING
 	msg.isReq = true
-	common.ProtocolParserLog.Debugf("NATS Parsed Ping:[%v], ReadBytes:%d, %v, %v", msg.String(), packetLen, messageType, msg.isReq)
-	return packResult(streamBuffer, packetLen+offset, msg.NatsMessage)
+	msg.Buf = payload[:packetLen]
+	common.ProtocolParserLog.Debugf("NATS Parsed Ping:[%v], ReadBytes:%d, %v, %v", msg.String(), packetEnd, messageType, msg.isReq)
+	if ok := msg.packFrameBase(streamBuffer, packetEnd+offset); !ok {
+		return protocol.ParseResult{ParseState: protocol.Ignore, ReadBytes: packetEnd + offset}
+	}
+	return protocol.ParseResult{
+		ParseState:     protocol.Success,
+		ParsedMessages: []protocol.ParsedMessage{&msg},
+		ReadBytes:      packetEnd + offset,
+	}
 }
 
 // Pong
 func (m *Pong) String() string {
 	return "Protocol:PONG"
 }
-
 func (m *Pong) Parse(payload []byte, offset int, messageType protocol.MessageType, streamBuffer *buffer.StreamBuffer) protocol.ParseResult {
 	// PONG␍␊
 	common.ProtocolParserLog.Debugf("NATS Parse Pong:%d, %d, %x", offset, len(payload), string(payload))
@@ -587,17 +671,25 @@ func (m *Pong) Parse(payload []byte, offset int, messageType protocol.MessageTyp
 
 	msg := Pong{}
 
+	packetEnd := packetLen
 	msg.ProtocolCode = PONG
 	msg.isReq = false
-	common.ProtocolParserLog.Debugf("NATS Parsed Pong:[%v], ReadBytes:%d, %v, %v", msg.String(), packetLen, messageType, msg.isReq)
-	return packResult(streamBuffer, packetLen+offset, msg.NatsMessage)
+	msg.Buf = payload[:packetEnd]
+	common.ProtocolParserLog.Debugf("NATS Parsed Pong:[%v], ReadBytes:%d, %v, %v", msg.String(), packetEnd, messageType, msg.isReq)
+	if ok := msg.packFrameBase(streamBuffer, packetEnd+offset); !ok {
+		return protocol.ParseResult{ParseState: protocol.Ignore, ReadBytes: packetEnd + offset}
+	}
+	return protocol.ParseResult{
+		ParseState:     protocol.Success,
+		ParsedMessages: []protocol.ParsedMessage{&msg},
+		ReadBytes:      packetEnd + offset,
+	}
 }
 
 // Ok
 func (m *Ok) String() string {
 	return "Protocol:+OK"
 }
-
 func (m *Ok) Parse(payload []byte, offset int, messageType protocol.MessageType, streamBuffer *buffer.StreamBuffer) protocol.ParseResult {
 	// +OK␍␊
 	common.ProtocolParserLog.Debugf("NATS Parse Ok:%d, %d, %x", offset, len(payload), string(payload))
@@ -615,10 +707,19 @@ func (m *Ok) Parse(payload []byte, offset int, messageType protocol.MessageType,
 
 	msg := Ok{}
 
+	packetEnd := packetLen
 	msg.ProtocolCode = OK
 	msg.isReq = false
-	common.ProtocolParserLog.Debugf("NATS Parsed Ok:[%v], ReadBytes:%d, %v, %v", msg.String(), packetLen, messageType, msg.isReq)
-	return packResult(streamBuffer, packetLen+offset, msg.NatsMessage)
+	msg.Buf = payload[:packetEnd]
+	common.ProtocolParserLog.Debugf("NATS Parsed Ok:[%v], ReadBytes:%d, %v, %v", msg.String(), packetEnd, messageType, msg.isReq)
+	if ok := msg.packFrameBase(streamBuffer, packetEnd+offset); !ok {
+		return protocol.ParseResult{ParseState: protocol.Ignore, ReadBytes: packetEnd + offset}
+	}
+	return protocol.ParseResult{
+		ParseState:     protocol.Success,
+		ParsedMessages: []protocol.ParsedMessage{&msg},
+		ReadBytes:      packetEnd + offset,
+	}
 }
 
 // Err
@@ -643,8 +744,17 @@ func (m *Err) Parse(payload []byte, offset int, messageType protocol.MessageType
 	msg := Err{}
 	msg.ErrorMessage = string(trimFiled(payload[5 : packetLen-len(_CRLF_)]))
 
+	packetEnd := packetLen
 	msg.ProtocolCode = ERR
 	msg.isReq = false
-	common.ProtocolParserLog.Debugf("NATS Parsed Err:[%v], ReadBytes:%d, %v, %v", msg.String(), packetLen, messageType, msg.isReq)
-	return packResult(streamBuffer, packetLen+offset, msg.NatsMessage)
+	msg.Buf = payload[:packetEnd]
+	common.ProtocolParserLog.Debugf("NATS Parsed Err:[%v], ReadBytes:%d, %v, %v", msg.String(), packetEnd, messageType, msg.isReq)
+	if ok := msg.packFrameBase(streamBuffer, packetEnd+offset); !ok {
+		return protocol.ParseResult{ParseState: protocol.Ignore, ReadBytes: packetEnd + offset}
+	}
+	return protocol.ParseResult{
+		ParseState:     protocol.Success,
+		ParsedMessages: []protocol.ParsedMessage{&msg},
+		ReadBytes:      packetEnd + offset,
+	}
 }
