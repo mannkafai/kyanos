@@ -32,7 +32,8 @@ var natsCmd *cobra.Command = &cobra.Command{
 func init() {
 	natsCmd.Flags().StringSlice("protocols", []string{}, "Specify the nats protocol to monitor(PUB, SUB, MSG), seperate by ','")
 	natsCmd.Flags().StringSlice("subjects", []string{}, "Specify the nats subject to monitor, seperate by ','")
-	redisCmd.Flags().SortFlags = false
+
+	natsCmd.Flags().SortFlags = false
 	natsCmd.PersistentFlags().SortFlags = false
 	copy := *natsCmd
 	watchCmd.AddCommand(&copy)

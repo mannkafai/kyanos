@@ -16,7 +16,7 @@ sudo kyanos watch http --side server --pid 1234 --path /foo/bar --host ubuntu.co
 sudo kyanos watch redis --command GET,SET --keys foo,bar --key-prefix app1:
 sudo kyanos watch mysql --latency 100 --req-size 1024 --resp-size 2048
 sudo kyanos watch rocketmq --request-codes 10,11 --languages JAVA,Go
-sudo kyanos watch nats --protocols PUB,SUB --subjects demo,echo
+sudo kyanos watch nats --protocols PUB,PING --subjects demo,echo
 	`,
 	Short:            "Capture the request/response recrods",
 	PersistentPreRun: func(cmd *cobra.Command, args []string) { Mode = WatchMode },
